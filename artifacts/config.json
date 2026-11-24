@@ -1,0 +1,76 @@
+{
+  "exercise_code": "E02",
+  "exercise_name": "Elbow Extension (Разгибание локтя)",
+  "best_model_name": "CalibratedCatBoostClassifier",
+  "feature_names": [
+    "max_angle",
+    "min_angle",
+    "start_angle",
+    "extension_rom",
+    "total_rom",
+    "ext_mean_angle",
+    "ext_std_angle",
+    "ext_q25_angle",
+    "ext_median_angle",
+    "ext_q75_angle",
+    "ext_q90_angle",
+    "ext_q95_angle",
+    "ext_iqr_angle",
+    "ext_duration_sec",
+    "ext_vel_mean",
+    "ext_vel_max",
+    "ext_vel_std",
+    "ext_acc_max",
+    "ext_acc_std",
+    "ext_jerk_rms",
+    "ext_ldlj",
+    "near_peak_sec",
+    "above_140_sec",
+    "above_145_sec",
+    "ext_frac_above_135",
+    "ext_frac_above_142",
+    "ext_frac_above_148",
+    "shoulder_disp_norm",
+    "trunk_angle_std",
+    "ext_traj_00",
+    "ext_traj_01",
+    "ext_traj_02",
+    "ext_traj_03",
+    "ext_traj_04",
+    "ext_traj_05",
+    "ext_traj_06",
+    "ext_traj_07",
+    "ext_traj_08",
+    "ext_traj_09",
+    "ext_traj_10",
+    "ext_traj_11",
+    "ext_traj_12",
+    "ext_traj_13",
+    "ext_traj_14",
+    "ext_traj_15"
+  ],
+  "confidence_threshold": 0.75,
+  "class_mapping": {
+    "0": "incomplete",
+    "1": "complete"
+  },
+  "ui_status_mapping": {
+    "completed": "Выполнено",
+    "review": "Проверьте инструкцию"
+  },
+  "interpretable_reference_max_angle_deg": 143.03,
+  "split_subjects": {
+    "train": [
+      "02",
+      "03",
+      "04",
+      "05"
+    ],
+    "val": [
+      "08"
+    ],
+    "test": [
+      "01"
+    ]
+  }
+}

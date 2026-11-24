@@ -1,6 +1,11 @@
-streamlit
-pandas
-plotly
-opencv-python
-mediapipe==0.10.14
-edge-tts
+mediapipe>=0.10.9,<0.10.22
+opencv-python>=4.9.0,<5.0.0
+numpy>=1.26.0,<2.0.0
+scipy>=1.11.0
+pandas>=2.0.0
+scikit-learn>=1.4.0
+catboost>=1.2.5
+matplotlib>=3.8.0
+seaborn>=0.13.0
+joblib>=1.3.0
+tqdm>=4.66.0

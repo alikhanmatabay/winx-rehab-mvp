@@ -1,0 +1,206 @@
+{
+  "split_info": {
+    "train_subjects": [
+      "02",
+      "03",
+      "04",
+      "05"
+    ],
+    "val_subjects": [
+      "08"
+    ],
+    "test_subjects": [
+      "01"
+    ],
+    "n_train_cycles": 86,
+    "n_val_cycles": 20,
+    "n_test_cycles": 21
+  },
+  "confidence_threshold": 0.75,
+  "validation_threshold_tuning": {
+    "val_ui_precision": 1.0,
+    "val_ui_recall": 0.7,
+    "val_ui_balanced_accuracy": 0.85
+  },
+  "test_metrics": {
+    "baseline_logistic_regression": {
+      "balanced_accuracy": 0.9583,
+      "macro_f1": 0.9519,
+      "f1_incomplete_0": 0.9565,
+      "f1_complete_1": 0.9474,
+      "precision_complete": 0.9,
+      "recall_complete": 1.0,
+      "brier_score": 0.0446,
+      "roc_auc": 1.0,
+      "confusion_matrix": [
+        [
+          11,
+          1
+        ],
+        [
+          0,
+          9
+        ]
+      ]
+    },
+    "main_calibrated_catboost": {
+      "balanced_accuracy": 0.9583,
+      "macro_f1": 0.9519,
+      "f1_incomplete_0": 0.9565,
+      "f1_complete_1": 0.9474,
+      "precision_complete": 0.9,
+      "recall_complete": 1.0,
+      "brier_score": 0.0757,
+      "roc_auc": 1.0,
+      "confusion_matrix": [
+        [
+          11,
+          1
+        ],
+        [
+          0,
+          9
+        ]
+      ]
+    },
+    "ui_decision_rule_on_test": {
+      "confidence_threshold": 0.75,
+      "test_completed_count": 10,
+      "test_review_count": 11,
+      "test_ui_precision_completed": 0.9,
+      "test_ui_recall_completed": 1.0,
+      "test_ui_balanced_accuracy": 0.9583
+    }
+  },
+  "val_metrics": {
+    "baseline_logistic_regression": {
+      "balanced_accuracy": 0.85,
+      "macro_f1": 0.8496,
+      "f1_incomplete_0": 0.8571,
+      "f1_complete_1": 0.8421,
+      "precision_complete": 0.8889,
+      "recall_complete": 0.8,
+      "brier_score": 0.1362,
+      "roc_auc": 0.9,
+      "confusion_matrix": [
+        [
+          9,
+          1
+        ],
+        [
+          2,
+          8
+        ]
+      ]
+    },
+    "main_calibrated_catboost": {
+      "balanced_accuracy": 0.8,
+      "macro_f1": 0.798,
+      "f1_incomplete_0": 0.8182,
+      "f1_complete_1": 0.7778,
+      "precision_complete": 0.875,
+      "recall_complete": 0.7,
+      "brier_score": 0.1367,
+      "roc_auc": 0.87,
+      "confusion_matrix": [
+        [
+          9,
+          1
+        ],
+        [
+          3,
+          7
+        ]
+      ]
+    }
+  },
+  "leave_one_subject_out_cv": {
+    "n_folds_subjects": 6,
+    "baseline_oof": {
+      "balanced_accuracy": 0.9684,
+      "macro_f1": 0.9684,
+      "f1_incomplete_0": 0.9701,
+      "f1_complete_1": 0.9667,
+      "precision_complete": 0.9667,
+      "recall_complete": 0.9667,
+      "brier_score": 0.0441,
+      "roc_auc": 0.9736,
+      "confusion_matrix": [
+        [
+          65,
+          2
+        ],
+        [
+          2,
+          58
+        ]
+      ]
+    },
+    "main_catboost_oof": {
+      "balanced_accuracy": 0.9443,
+      "macro_f1": 0.9447,
+      "f1_incomplete_0": 0.9481,
+      "f1_complete_1": 0.9412,
+      "precision_complete": 0.9492,
+      "recall_complete": 0.9333,
+      "brier_score": 0.0483,
+      "roc_auc": 0.9756,
+      "confusion_matrix": [
+        [
+          64,
+          3
+        ],
+        [
+          4,
+          56
+        ]
+      ]
+    }
+  },
+  "interpretable_1d_angle_rule": {
+    "optimal_max_angle_deg": 143.03,
+    "train_balanced_accuracy": 1.0
+  },
+  "top_10_catboost_features": [
+    {
+      "feature": "ext_q90_angle",
+      "importance": 24.477
+    },
+    {
+      "feature": "ext_frac_above_142",
+      "importance": 23.498
+    },
+    {
+      "feature": "ext_traj_14",
+      "importance": 11.64
+    },
+    {
+      "feature": "ext_traj_15",
+      "importance": 7.677
+    },
+    {
+      "feature": "ext_frac_above_148",
+      "importance": 5.551
+    },
+    {
+      "feature": "above_145_sec",
+      "importance": 5.082
+    },
+    {
+      "feature": "ext_traj_13",
+      "importance": 4.886
+    },
+    {
+      "feature": "ext_q95_angle",
+      "importance": 3.923
+    },
+    {
+      "feature": "max_angle",
+      "importance": 2.444
+    },
+    {
+      "feature": "above_140_sec",
+      "importance": 1.799
+    }
+  ]
+}
