@@ -4,6 +4,8 @@ import plotly.express as px
 import time
 import os
 import cv2
+import numpy as np
+import mediapipe as mp
 
 st.set_page_config(page_title="SerIQ — Домашняя реабилитация", layout="wide")
 
@@ -71,7 +73,8 @@ TEXTS = {
         "cycle_col": "Повторение",
         "result_col": "Результат",
         "conf_col": "Уверенность ИИ",
-        "camera_hint": "💡 Нажмите кнопку выше, отойдите на 1-2 метра, чтобы рука полностью помещалась в кадр, и начните упражнение."
+        "camera_hint": "💡 Нажмите кнопку выше, отойдите на 1-2 метра, чтобы рука полностью помещалась в кадр, и начните упражнение.",
+        "angle_hud": "Угол локтя"
     },
     "KZ": {
         "title": "SerIQ — Үйде оңалтуға арналған көмекші",
@@ -99,19 +102,36 @@ TEXTS = {
         "cycle_col": "Қайталау",
         "result_col": "Нәтиже",
         "conf_col": "ЖИ сенімділігі",
-        "camera_hint": "💡 Жоғарыдағы батырманы басып, қолыңыз кадрға толық көрінуі үшін 1-2 метрге шегініңіз және жаттығуды бастаңыз."
+        "camera_hint": "💡 Жоғарыдағы батырманы басып, қолыңыз кадрға толық көрінуі үшін 1-2 метрге шегініңіз және жаттығуды бастаңыз.",
+        "angle_hud": "Шынтақ бұрышы"
     }
 }
 
-def mock_analyze_video(video_path):
+def calculate_angle(a, b, c):
+    """
+    Вычисляет угол между точками a (плечо), b (локоть), c (запястье) в градусах.
+    """
+    a = np.array(a)
+    b = np.array(b)
+    c = np.array(c)
+    
+    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
+    angle = np.abs(radians * 180.0 / np.pi)
+    if angle > 180.0:
+        angle = 360.0 - angle
+    return int(angle)
+
+def mock_analyze_video(video_path, real_angles=None):
     time.sleep(1.5)
+    angles = real_angles if (real_angles and len(real_angles) >= 5) else [45, 70, 110, 155, 172, 140, 90, 48, 65, 100, 128, 105, 60, 46, 80, 135, 170, 120, 55]
+    max_ang = max(angles) if angles else 168
     return {
         "cycles": [
-            {"cycle": 1, "status": "complete", "confidence": 0.94},
+            {"cycle": 1, "status": "complete" if max_ang >= 150 else "incomplete", "confidence": 0.94},
             {"cycle": 2, "status": "incomplete", "confidence": 0.52},
             {"cycle": 3, "status": "complete", "confidence": 0.89},
         ],
-        "angles_timeline": [45, 70, 110, 155, 172, 140, 90, 48, 65, 100, 128, 105, 60, 46, 80, 135, 170, 120, 55]
+        "angles_timeline": angles
     }
 
 def display_results(result, t):
@@ -181,11 +201,9 @@ with col2:
     st.header(t["step2"])
     st.caption(t["camera_hint"])
     
-    # Главное действие: большая кнопка записи с веб-камеры
     start_camera = st.button(t["camera_start_btn"], type="primary", use_container_width=True)
     
     if start_camera:
-        # Проверка доступности камеры перед отсчетом
         cap = cv2.VideoCapture(0)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -193,7 +211,7 @@ with col2:
         if not cap.isOpened():
             st.error(t["camera_error"])
         else:
-            # 1. Отсчет 3 секунды ("Приготовьтесь..."), чтобы пациент занял позицию
+            # 1. Отсчет 3 секунды ("Приготовьтесь...")
             countdown_box = st.empty()
             for sec in [3, 2, 1]:
                 countdown_box.markdown(
@@ -216,10 +234,19 @@ with col2:
             image_placeholder = st.empty()
             progress_bar = st.progress(0.0)
             
+            # Инициализация MediaPipe Pose (легкая модель complexity=0 для максимальной скорости)
+            mp_pose = mp.solutions.pose
+            pose = mp_pose.Pose(
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5,
+                model_complexity=0
+            )
+            
             start_time = time.time()
             RECORD_DURATION = 10.0
+            live_angles = []
             
-            # 3. Считывание кадров в течение 10 секунд с зеркальным отражением (cv2.flip)
+            # 3. Считывание кадров, поиск ключевых точек MediaPipe и отрисовка линий
             while True:
                 elapsed = time.time() - start_time
                 if elapsed >= RECORD_DURATION:
@@ -229,13 +256,87 @@ with col2:
                 if not ret:
                     break
                 
-                # Зеркальное отображение для привычного восприятия пациента
-                mirrored_frame = cv2.flip(frame, 1)
-                out.write(mirrored_frame)
+                # Зеркальное отображение
+                mirrored = cv2.flip(frame, 1)
+                h, w, _ = mirrored.shape
                 
-                # Отображение в реальном времени с оптимизацией JPEG
-                rgb_frame = cv2.cvtColor(mirrored_frame, cv2.COLOR_BGR2RGB)
-                image_placeholder.image(rgb_frame, channels="RGB", output_format="JPEG", use_container_width=True)
+                # Обработка через MediaPipe Pose
+                rgb_for_mp = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
+                results = pose.process(rgb_for_mp)
+                
+                current_angle = None
+                if results.pose_landmarks:
+                    lm = results.pose_landmarks.landmark
+                    
+                    # Проверяем видимость правой и левой руки
+                    r_s = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+                    r_e = lm[mp_pose.PoseLandmark.RIGHT_ELBOW.value]
+                    r_w = lm[mp_pose.PoseLandmark.RIGHT_WRIST.value]
+                    r_vis = (r_s.visibility + r_e.visibility + r_w.visibility) / 3.0
+                    
+                    l_s = lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+                    l_e = lm[mp_pose.PoseLandmark.LEFT_ELBOW.value]
+                    l_w = lm[mp_pose.PoseLandmark.LEFT_WRIST.value]
+                    l_vis = (l_s.visibility + l_e.visibility + l_w.visibility) / 3.0
+                    
+                    # Выбираем наиболее видимую руку
+                    if r_vis > 0.4 and r_vis >= l_vis:
+                        s_pt, e_pt, w_pt = r_s, r_e, r_w
+                    elif l_vis > 0.4:
+                        s_pt, e_pt, w_pt = l_s, l_e, l_w
+                    else:
+                        s_pt, e_pt, w_pt = None, None, None
+                    
+                    if s_pt and e_pt and w_pt:
+                        s_px = (int(s_pt.x * w), int(s_pt.y * h))
+                        e_px = (int(e_pt.x * w), int(e_pt.y * h))
+                        w_px = (int(w_pt.x * w), int(w_pt.y * h))
+                        
+                        # Вычисление угла локтя
+                        current_angle = calculate_angle(s_px, e_px, w_px)
+                        live_angles.append(current_angle)
+                        
+                        # Отрисовка линий скелета: плечо -> локоть -> запястье
+                        cv2.line(mirrored, s_px, e_px, (0, 255, 0), 4)
+                        cv2.line(mirrored, e_px, w_px, (0, 255, 0), 4)
+                        
+                        # Точки суставов
+                        cv2.circle(mirrored, s_px, 8, (0, 165, 255), -1)
+                        cv2.circle(mirrored, e_px, 10, (0, 0, 255), -1)
+                        cv2.circle(mirrored, w_px, 8, (0, 165, 255), -1)
+                        
+                        # Текстовая метка угла рядом с локтем
+                        cv2.putText(
+                            mirrored,
+                            f"{current_angle} deg",
+                            (e_px[0] + 15, max(30, e_px[1] - 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            (0, 255, 255),
+                            2,
+                            cv2.LINE_AA
+                        )
+                
+                # Верхний информационный HUD поверх видео
+                cv2.rectangle(mirrored, (15, 15), (320, 60), (30, 30, 30), -1)
+                hud_angle_str = f"{current_angle} deg" if current_angle is not None else "-- deg"
+                cv2.putText(
+                    mirrored,
+                    f"{t['angle_hud']}: {hud_angle_str}",
+                    (25, 47),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    (50, 255, 50),
+                    2,
+                    cv2.LINE_AA
+                )
+                
+                # Запись размеченного кадра в файл
+                out.write(mirrored)
+                
+                # Быстрый вывод в UI через JPEG
+                rgb_display = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
+                image_placeholder.image(rgb_display, channels="RGB", output_format="JPEG", use_container_width=True)
                 
                 remaining = max(0, int(RECORD_DURATION - elapsed))
                 status_box.markdown(
@@ -244,20 +345,21 @@ with col2:
                 )
                 progress_bar.progress(min(1.0, elapsed / RECORD_DURATION))
             
-            # Освобождение ресурсов камеры и видеозаписи
+            # Освобождение ресурсов
             cap.release()
             out.release()
+            pose.close()
             
             image_placeholder.empty()
             progress_bar.empty()
             status_box.success(t["recording_done"])
             
-            # 4. Автоматическая передача temp_camera.mp4 в функцию анализа и вывод сводки
+            # 4. Передача записанного ролика и реальных углов в анализ
             with st.spinner(t["analyzing"]):
-                result = mock_analyze_video(temp_cam_file)
+                result = mock_analyze_video(temp_cam_file, real_angles=live_angles)
             display_results(result, t)
             
-    # Загрузка готового видео спрятана внутрь спойлера для тестирования
+    # Загрузка готового видео для теста
     st.write("")
     with st.expander(t["expander_upload"]):
         uploaded_file = st.file_uploader(t["upload_label"], type=["mp4", "avi", "mov"])

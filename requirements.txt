@@ -2,3 +2,4 @@ streamlit
 pandas
 plotly
 opencv-python
+mediapipe==0.10.14
