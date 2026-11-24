@@ -4,3 +4,4 @@ temp_*.mp4
 temp_*.avi
 temp_*.mov
 .streamlit/
+progress.json

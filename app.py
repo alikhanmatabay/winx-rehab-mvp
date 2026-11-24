@@ -3,9 +3,136 @@ import pandas as pd
 import plotly.express as px
 import time
 import os
+import json
+import datetime
+import asyncio
+import base64
+from io import BytesIO
 import cv2
 import numpy as np
 import mediapipe as mp
+import edge_tts
+import streamlit.components.v1 as components
+
+# ==============================================================================
+# ХРАНЕНИЕ ПРОГРЕССА И ГЕЙМИФИКАЦИЯ (progress.json)
+# ==============================================================================
+PROGRESS_FILE = "progress.json"
+DEFAULT_PROGRESS = {
+    "E01": [
+        {"date": "2026-11-20", "amplitude_pct": 40},
+        {"date": "2026-11-22", "amplitude_pct": 52}
+    ],
+    "E02": [],
+    "E03": [],
+    "E04": []
+}
+TARGET_AMPLITUDE_NORMS = {
+    "E01": 75,
+    "E02": 60,
+    "E03": 85,
+    "E04": 80
+}
+
+def load_progress() -> dict:
+    """Загружает историю тренировок из progress.json или инициализирует стартовыми данными."""
+    if os.path.exists(PROGRESS_FILE):
+        try:
+            with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    for k in ["E01", "E02", "E03", "E04"]:
+                        if k not in data:
+                            data[k] = []
+                    return data
+        except Exception:
+            pass
+    save_progress(DEFAULT_PROGRESS)
+    return json.loads(json.dumps(DEFAULT_PROGRESS))
+
+def save_progress(data: dict):
+    """Сохраняет прогресс в progress.json."""
+    try:
+        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def get_exercise_stats(progress_data: dict, exercise_id: str, today_str: str = None) -> dict:
+    """Возвращает статус за сегодня и лучший результат прошлых дней."""
+    today = today_str or datetime.date.today().isoformat()
+    entries = progress_data.get(exercise_id, [])
+    today_entries = [e for e in entries if e.get("date") == today]
+    is_completed_today = len(today_entries) > 0
+    today_pct = max([e.get("amplitude_pct", 0) for e in today_entries]) if is_completed_today else None
+    past_entries = [e for e in entries if e.get("date") != today]
+    latest_past_pct = past_entries[-1].get("amplitude_pct") if past_entries else None
+    best_past_pct = max([e.get("amplitude_pct", 0) for e in past_entries]) if past_entries else None
+    return {
+        "completed_today": is_completed_today,
+        "today_pct": today_pct,
+        "past_pct": latest_past_pct or best_past_pct,
+        "history": entries
+    }
+
+def record_exercise_session(exercise_id: str, amplitude_pct: int, today_str: str = None) -> dict:
+    """Записывает результат упражнения за сегодня в progress.json и возвращает дельту."""
+    today = today_str or datetime.date.today().isoformat()
+    data = load_progress()
+    stats_before = get_exercise_stats(data, exercise_id, today)
+    prev_pct = stats_before["past_pct"]
+    
+    entries = data.get(exercise_id, [])
+    existing_today = [e for e in entries if e.get("date") == today]
+    if existing_today:
+        existing_today[0]["amplitude_pct"] = max(existing_today[0].get("amplitude_pct", 0), amplitude_pct)
+    else:
+        entries.append({"date": today, "amplitude_pct": amplitude_pct})
+    data[exercise_id] = entries
+    save_progress(data)
+    
+    diff_pct = (amplitude_pct - prev_pct) if prev_pct is not None else None
+    return {
+        "amplitude_pct": amplitude_pct,
+        "prev_pct": prev_pct,
+        "diff_pct": diff_pct,
+        "completed_today": True
+    }
+
+VOICE_MAP = {
+    "RU": "ru-RU-SvetlanaNeural",
+    "KZ": "kk-KZ-AigulNeural",
+    "EN": "en-US-AriaNeural",
+}
+
+@st.cache_data(show_spinner=False)
+def generate_speech(text: str, lang_code: str) -> bytes | None:
+    """Генерирует MP3-озвучку в оперативной памяти (BytesIO) через edge-tts."""
+    voice = VOICE_MAP.get(lang_code, "ru-RU-SvetlanaNeural")
+    async def _synthesize() -> bytes:
+        communicate = edge_tts.Communicate(text, voice)
+        buf = BytesIO()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
+        return buf.getvalue()
+    try:
+        audio_bytes = asyncio.run(_synthesize())
+        return audio_bytes if audio_bytes else None
+    except Exception:
+        return None
+
+def play_hidden_audio(audio_bytes: bytes, uid: str = ""):
+    """Воспроизводит MP3 через скрытый HTML <audio autoplay> без визуального плеера."""
+    b64 = base64.b64encode(audio_bytes).decode("ascii")
+    components.html(
+        f"""
+        <audio id="tts_{uid}" autoplay style="display:none;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+        """,
+        height=0,
+    )
 
 st.set_page_config(
     page_title="SerIQ — Домашняя реабилитация",
@@ -37,13 +164,16 @@ EXERCISES = {
   <polygon points="73,40 79,44 73,48" fill="#38BDF8"/>
 </svg>""",
         "RU": {
-            "title": "Раскрытие кисти"
+            "title": "Раскрытие кисти",
+            "voice_text": "Упражнение: раскрытие кисти. Сожмите пальцы в кулак, затем плавно раскройте ладонь и полностью выпрямите пальцы. Выполните три плавных повторения."
         },
         "KZ": {
-            "title": "Саусақтарды ашу"
+            "title": "Саусақтарды ашу",
+            "voice_text": "Жаттығу: алақанды ашу. Саусақтарыңызды жұдырыққа түйіп, содан кейін алақаныңызды баяу ашып, саусақтарыңызды толық жазыңыз. Үш рет баяу қайталаңыз."
         },
         "EN": {
-            "title": "Opening the hand"
+            "title": "Opening the hand",
+            "voice_text": "Exercise: opening the hand. Make a gentle fist, then slowly open your palm and straighten all fingers. Perform three smooth repetitions."
         },
         "storyboard": [
             {
@@ -127,13 +257,16 @@ EXERCISES = {
   <polygon points="70,41 74,34 78,41" fill="#10B981"/>
 </svg>""",
         "RU": {
-            "title": "Подъём запястья"
+            "title": "Подъём запястья",
+            "voice_text": "Упражнение: подъём запястья. Положите предплечье ровно, опустите кисть вниз, а затем плавно поднимите её вверх. Выполните три плавных повторения без пауз."
         },
         "KZ": {
-            "title": "Білекті көтеру"
+            "title": "Білекті көтеру",
+            "voice_text": "Жаттығу: білекті көтеру. Білегіңізді тегіс қойып, қолыңызды төмен түсіріңіз, содан кейін баяу жоғары көтеріңіз. Кідіріссіз үш рет баяу қайталаңыз."
         },
         "EN": {
-            "title": "Lifting the wrist"
+            "title": "Lifting the wrist",
+            "voice_text": "Exercise: lifting the wrist. Rest your forearm flat, lower your hand down, and then smoothly lift your wrist upward. Perform three smooth repetitions without pauses."
         },
         "storyboard": [
             {
@@ -200,13 +333,16 @@ EXERCISES = {
   <text x="48" y="74" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="800" fill="#6D28D9">180°</text>
 </svg>""",
         "RU": {
-            "title": "Разгибание локтя"
+            "title": "Разгибание локтя",
+            "voice_text": "Упражнение: разгибание локтя. Согните руку в локте под прямым углом, затем плавно выпрямите её полностью до ста восьмидесяти градусов. Выполните три плавных повторения."
         },
         "KZ": {
-            "title": "Шынтақты жазу"
+            "title": "Шынтақты жазу",
+            "voice_text": "Жаттығу: шынтақты жазу. Қолыңызды шынтақтан тік бұрыш жасап бүгіңіз, содан кейін оны жүз сексен градусқа дейін толық жазыңыз. Үш рет баяу қайталаңыз."
         },
         "EN": {
-            "title": "Extending the elbow"
+            "title": "Extending the elbow",
+            "voice_text": "Exercise: extending the elbow. Bend your elbow to ninety degrees, then smoothly straighten your arm all the way to one hundred eighty degrees. Perform three smooth repetitions."
         },
         "storyboard": [
             {
@@ -268,13 +404,16 @@ EXERCISES = {
   <polygon points="19,47 22,40 25,47" fill="#FBBF24"/>
 </svg>""",
         "RU": {
-            "title": "Подъём предмета"
+            "title": "Подъём предмета",
+            "voice_text": "Упражнение: подъём предмета. Опустите руку вдоль корпуса, затем плавно поднимите предмет вперёд и вверх до уровня плеча. Выполните три плавных повторения."
         },
         "KZ": {
-            "title": "Затты көтеру"
+            "title": "Затты көтеру",
+            "voice_text": "Жаттығу: затты көтеру. Қолыңызды денеңіздің бойымен төмен түсіріп, содан кейін затты алға және иық деңгейіне дейін баяу көтеріңіз. Үш рет баяу қайталаңыз."
         },
         "EN": {
-            "title": "Lifting an object"
+            "title": "Lifting an object",
+            "voice_text": "Exercise: lifting an object. Lower your arm along your side, then smoothly lift the object forward and up to shoulder level. Perform three smooth repetitions."
         },
         "storyboard": [
             {
@@ -398,7 +537,25 @@ st.markdown("""
         background-color: #F4F7FA;
     }
     
-    /* 3. Выравнивание 3 кнопок выбора языка строго в одну линию с ярким белым активным текстом */
+    /* 3. Крупные шрифты на всех кнопках и выравнивание 3 кнопок выбора языка */
+    .stButton > button,
+    .stButton > button p,
+    .stButton > button span,
+    .stButton > button div {
+        font-size: 20px !important;
+        font-weight: 700 !important;
+        line-height: 1.2 !important;
+    }
+
+    .stButton > button[kind="primary"],
+    .stButton > button[kind="primary"] p,
+    .stButton > button[kind="primary"] span,
+    .stButton > button[kind="primary"] div {
+        font-size: 22px !important;
+        font-weight: 700 !important;
+        color: #FFFFFF !important;
+    }
+
     .lang-switch-wrapper {
         display: flex !important;
         width: 100% !important;
@@ -412,16 +569,18 @@ st.markdown("""
         padding: 0 !important;
     }
     
+    .lang-switch-wrapper .stButton > button,
     .lang-switch-wrapper div[data-testid="stButton"] button {
         width: 100% !important;
         min-width: 72px !important;
-        min-height: 52px !important;
-        max-height: 52px !important;
-        height: 52px !important;
+        min-height: 54px !important;
+        max-height: 54px !important;
+        height: 54px !important;
         margin: 0 !important;
         padding: 6px 4px !important;
         font-size: 20px !important;
         font-weight: 700 !important;
+        line-height: 1.2 !important;
         white-space: nowrap !important;
         overflow: visible !important;
         text-align: center !important;
@@ -429,6 +588,7 @@ st.markdown("""
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
+        box-sizing: border-box !important;
         transform: none !important;
         transition: background-color 0.15s ease, border-color 0.15s ease !important;
     }
@@ -440,10 +600,15 @@ st.markdown("""
         font-size: 20px !important;
     }
     
+    .lang-switch-wrapper .stButton > button p,
+    .lang-switch-wrapper .stButton > button span,
+    .lang-switch-wrapper .stButton > button div,
     .lang-switch-wrapper div[data-testid="stButton"] button p,
-    .lang-switch-wrapper div[data-testid="stButton"] button span {
+    .lang-switch-wrapper div[data-testid="stButton"] button span,
+    .lang-switch-wrapper div[data-testid="stButton"] button div {
         font-size: 20px !important;
         font-weight: 700 !important;
+        line-height: 1.2 !important;
         white-space: nowrap !important;
         overflow: visible !important;
         margin: 0 !important;
@@ -454,7 +619,7 @@ st.markdown("""
     .lang-switch-wrapper div[data-testid="stButton"] button[kind="primary"] {
         background-color: #0E7490 !important;
         color: #FFFFFF !important;
-        border: none !important;
+        border: 2px solid #0E7490 !important;
         box-shadow: 0 2px 8px rgba(14, 116, 144, 0.28) !important;
     }
     
@@ -482,7 +647,16 @@ st.markdown("""
         color: #0E7490 !important;
     }
     
-    /* 4. Карточки Экрана 1 (min-height: 360px, круг 120x120px, название 26px) */
+    /* 4. Карточки Экрана 1 и Дневной план To-Do */
+    .daily-plan-card {
+        background: #FFFFFF !important;
+        border: 2px solid #CCFBF1 !important;
+        border-radius: 20px !important;
+        padding: 22px 28px !important;
+        margin-bottom: 24px !important;
+        box-shadow: 0 4px 18px rgba(14, 116, 144, 0.06) !important;
+    }
+    
     .exercise-card-link {
         text-decoration: none !important;
         display: block !important;
@@ -491,10 +665,10 @@ st.markdown("""
     }
     
     .exercise-card {
-        min-height: 440px !important;
-        height: 440px !important;
+        min-height: 480px !important;
+        height: auto !important;
         border-radius: 24px !important;
-        padding: 36px 24px !important;
+        padding: 30px 20px !important;
         display: flex !important;
         flex-direction: column !important;
         align-items: center !important;
@@ -532,6 +706,7 @@ st.markdown("""
         background: rgba(255, 255, 255, 0.92) !important;
         color: #334155 !important;
         letter-spacing: 0.5px !important;
+        display: inline-block !important;
     }
     
     /* Белый круг 120x120px для схемы биомеханики */
@@ -554,6 +729,45 @@ st.markdown("""
         color: #0F172A !important;
         line-height: 1.25 !important;
         margin-top: 4px !important;
+        display: block !important;
+    }
+
+    .exercise-card-status-done {
+        background: #DCFCE7 !important;
+        border: 1.5px solid #86EFAC !important;
+        border-radius: 12px !important;
+        padding: 8px 12px !important;
+        font-size: 17px !important;
+        font-weight: 700 !important;
+        color: #166534 !important;
+        width: 100% !important;
+        display: block !important;
+        text-align: center !important;
+        box-sizing: border-box !important;
+        margin-top: 14px !important;
+    }
+    
+    .exercise-card-status-todo {
+        background: #F1F5F9 !important;
+        border: 1.5px solid #CBD5E1 !important;
+        border-radius: 12px !important;
+        padding: 8px 12px !important;
+        font-size: 16px !important;
+        font-weight: 700 !important;
+        color: #475569 !important;
+        width: 100% !important;
+        display: block !important;
+        text-align: center !important;
+        box-sizing: border-box !important;
+        margin-top: 14px !important;
+    }
+    
+    .exercise-card-prev-line {
+        font-size: 14px !important;
+        font-weight: 600 !important;
+        color: #64748B !important;
+        margin-top: 3px !important;
+        display: block !important;
     }
     
     /* Контейнеры Экрана 2 */
@@ -802,8 +1016,14 @@ st.markdown("""
     .sb-frame-1 { animation-name: sbHighlight; }
     .sb-frame-2 { animation-name: sbHighlight2; }
     .sb-frame-3 { animation-name: sbHighlight3; }
+    .stCheckbox label p,
+    div[data-testid="stCheckbox"] label p {
+        font-size: 17px !important;
+        font-weight: 600 !important;
+    }
+
     .sb-caption {
-        font-size: 15px !important;
+        font-size: 16px !important;
         font-weight: 700 !important;
         color: #334155 !important;
         line-height: 1.3 !important;
@@ -865,7 +1085,22 @@ TEXTS = {
         "side_left": "Левая рука",
         "analyzed_arm_label": "Анализируемая рука (макс. амплитуда)",
         "full_amplitude_tip": "💡 Напоминание: выполняйте движение плавно, на полную амплитуду и без пауз в середине движения.",
-        "repeat_reminder": "💡 Выполните 3 плавных повторения без пауз"
+        "repeat_reminder": "💡 Выполните 3 плавных повторения без пауз",
+        "replay_voice_btn": "🔊 Прослушать ещё раз",
+        "camera_voice_prompt": "Приготовьтесь, садитесь перед камерой и начинайте упражнение",
+        "daily_plan_title": "План тренировок на сегодня",
+        "daily_plan_sub": "Выполните 4 назначенных упражнения для устойчивого восстановления суставов",
+        "daily_plan_done_all": "🎉 Отличная работа! Все 4 упражнения на сегодня выполнены",
+        "today_counter_label": "выполнено",
+        "card_status_todo": "⏳ 0 / 1 сегодня",
+        "card_status_done": "✅ Выполнено сегодня",
+        "card_prev_result": "Прошлый результат: {pct}%",
+        "recovery_progress_title": "Ваш прогресс восстановления",
+        "recovery_pct_label": "{pct}% от целевой нормы подвижности",
+        "recovery_diff_up": "📈 +{diff}% по сравнению с прошлым разом! Сустав разрабатывается",
+        "recovery_diff_same": "👍 Стабильный результат ({pct}%), продолжайте плавные занятия",
+        "recovery_diff_start": "🎯 Отличный старт! Результат зафиксирован в дневнике",
+        "today_completed_badge": "✅ Засчитано в дневной план (1 / 1 сегодня)"
     },
     "KZ": {
         "app_title": "SerIQ — Үйде оңалту көмекшісі",
@@ -909,7 +1144,22 @@ TEXTS = {
         "side_left": "Сол қол",
         "analyzed_arm_label": "Талданған қол (макс. амплитуда)",
         "full_amplitude_tip": "💡 Есте сақтаңыз: қимылды баяу, толық амплитудада және орта жолда кідірместен орындаңыз.",
-        "repeat_reminder": "💡 3 рет баяу, кідіріссіз орындаңыз"
+        "repeat_reminder": "💡 3 рет баяу, кідіріссіз орындаңыз",
+        "replay_voice_btn": "🔊 Қайта тыңдау",
+        "camera_voice_prompt": "Дайындалыңыз, камера алдына отырып жаттығуды бастаңыз",
+        "daily_plan_title": "Бүгінгі жаттығу жоспары",
+        "daily_plan_sub": "Буындарды қалпына келтіру үшін бүгінгі 4 жаттығуды орындаңыз",
+        "daily_plan_done_all": "🎉 Жарайсыз! Бүгінгі барлық 4 жаттығу толық орындалды",
+        "today_counter_label": "орындалды",
+        "card_status_todo": "⏳ Бүгін 0 / 1",
+        "card_status_done": "✅ Бүгін орындалды",
+        "card_prev_result": "Алдыңғы нәтиже: {pct}%",
+        "recovery_progress_title": "Қалпына келу прогресіңіз",
+        "recovery_pct_label": "Мақсатты қозғалыс нормасының {pct}%-ы",
+        "recovery_diff_up": "📈 Алдыңғы көрсеткіштен +{diff}% артты! Буын жақсы дамуда",
+        "recovery_diff_same": "👍 Тұрақты нәтиже ({pct}%), жаттығуды осы қарқынмен жалғастырыңыз",
+        "recovery_diff_start": "🎯 Тамаша бастама! Алғашқы деректер күнделікке жазылды",
+        "today_completed_badge": "✅ Бүгінгі жоспарға есептелді (1 / 1)"
     },
     "EN": {
         "app_title": "SerIQ — Home Rehabilitation",
@@ -953,7 +1203,22 @@ TEXTS = {
         "side_left": "Left arm",
         "analyzed_arm_label": "Analyzed arm (max motion range)",
         "full_amplitude_tip": "💡 Reminder: perform each movement smoothly, through the full range of motion, and without mid-pauses.",
-        "repeat_reminder": "💡 Perform 3 smooth repetitions without pauses"
+        "repeat_reminder": "💡 Perform 3 smooth repetitions without pauses",
+        "replay_voice_btn": "🔊 Listen again",
+        "camera_voice_prompt": "Get ready, sit in front of the camera and begin the exercise",
+        "daily_plan_title": "Today's Rehabilitation Plan",
+        "daily_plan_sub": "Complete all 4 prescribed exercises for steady joint recovery",
+        "daily_plan_done_all": "🎉 Great job! All 4 exercises completed for today",
+        "today_counter_label": "completed",
+        "card_status_todo": "⏳ 0 / 1 today",
+        "card_status_done": "✅ Completed today",
+        "card_prev_result": "Previous result: {pct}%",
+        "recovery_progress_title": "Your Recovery Progress",
+        "recovery_pct_label": "{pct}% of target mobility range",
+        "recovery_diff_up": "📈 +{diff}% compared to last time! Joint mobility is improving",
+        "recovery_diff_same": "👍 Stable result ({pct}%), keep up the smooth exercises",
+        "recovery_diff_start": "🎯 Great start! Initial progress recorded in your diary",
+        "today_completed_badge": "✅ Counted in daily plan (1 / 1 today)"
     }
 }
 
@@ -1017,6 +1282,18 @@ def mock_analyze_video(video_path, exercise_id="E03", real_angles=None, chosen_s
     # Оценка правильности на основе достаточного разгибания/амплитуды
     is_complete_c1 = (max_ang >= 140 or amplitude >= 55)
     
+    # Расчет процента восстановления амплитуды относительно нормы
+    target_norm = TARGET_AMPLITUDE_NORMS.get(exercise_id, 75)
+    if real_angles and len(real_angles) >= 4:
+        calc_amp = max(real_angles) - min(real_angles)
+        amplitude_pct = int(min(100, max(25, (calc_amp / target_norm) * 100)))
+    else:
+        # Для E01 прошлый рекорд был 52%, реалистичный прогресс сегодня — 64% (+12%)
+        default_pcts = {"E01": 64, "E02": 58, "E03": 74, "E04": 62}
+        amplitude_pct = default_pcts.get(exercise_id, 60)
+        
+    prog_info = record_exercise_session(exercise_id, amplitude_pct)
+    
     return {
         "cycles": [
             {"cycle": 1, "status": "complete" if is_complete_c1 else "incomplete", "confidence": 0.94},
@@ -1026,7 +1303,11 @@ def mock_analyze_video(video_path, exercise_id="E03", real_angles=None, chosen_s
         "angles_timeline": angles,
         "chosen_side": chosen_side,
         "left_timeline": left_angles or [],
-        "right_timeline": right_angles or []
+        "right_timeline": right_angles or [],
+        "exercise_id": exercise_id,
+        "amplitude_pct": amplitude_pct,
+        "prev_pct": prog_info.get("prev_pct"),
+        "diff_pct": prog_info.get("diff_pct")
     }
 
 def render_analysis_view(result, t):
@@ -1065,6 +1346,48 @@ def render_analysis_view(result, t):
             <div class="rc-desc">{t['result_warning_desc']}</div>
         </div>
         """, unsafe_allow_html=True)
+        
+    # ── Блок восстановления амплитуды движения (%) ──────────────────────────
+    amp_pct = result.get("amplitude_pct", 58)
+    prev_pct = result.get("prev_pct")
+    diff_pct = result.get("diff_pct")
+    
+    if prev_pct is not None and diff_pct is not None:
+        if diff_pct > 0:
+            diff_msg = t["recovery_diff_up"].format(diff=diff_pct)
+            diff_box_style = "background: #F0FDF4; border: 1.5px solid #86EFAC; color: #166534;"
+        elif diff_pct == 0:
+            diff_msg = t["recovery_diff_same"].format(pct=amp_pct)
+            diff_box_style = "background: #F8FAFC; border: 1.5px solid #CBD5E1; color: #334155;"
+        else:
+            diff_msg = t["recovery_diff_same"].format(pct=amp_pct)
+            diff_box_style = "background: #F8FAFC; border: 1.5px solid #CBD5E1; color: #334155;"
+    else:
+        diff_msg = t["recovery_diff_start"]
+        diff_box_style = "background: #EFF6FF; border: 1.5px solid #93C5FD; color: #1E40AF;"
+
+    st.markdown(f"""
+    <div style="background: #FFFFFF; border: 2px solid #E2E8F0; border-radius: 20px; padding: 22px 26px; margin-bottom: 22px; box-shadow: 0 4px 16px rgba(15,23,42,0.05);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+            <div style="font-size: 24px; font-weight: 800; color: #0F172A; display: flex; align-items: center; gap: 8px;">
+                <span>📊</span> <span>{t['recovery_progress_title']}</span>
+            </div>
+            <div style="background: #DCFCE7; border: 1px solid #86EFAC; color: #15803D; font-size: 17px; font-weight: 700; border-radius: 10px; padding: 6px 14px;">
+                {t['today_completed_badge']}
+            </div>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px;">
+            <span style="font-size: 46px; font-weight: 900; color: #0E7490; line-height: 1;">{amp_pct}%</span>
+            <span style="font-size: 20px; font-weight: 700; color: #334155;">{t['recovery_pct_label'].format(pct=amp_pct)}</span>
+        </div>
+        <div style="width: 100%; height: 20px; background: #E2E8F0; border-radius: 10px; overflow: hidden; margin-bottom: 14px;">
+            <div style="width: {amp_pct}%; height: 100%; background: linear-gradient(90deg, #0E7490 0%, #10B981 100%); border-radius: 10px; transition: width 0.6s ease;"></div>
+        </div>
+        <div style="{diff_box_style} border-radius: 12px; padding: 12px 18px; font-size: 19px; font-weight: 700;">
+            {diff_msg}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
         
     # Плашка с указанием руки с наибольшей амплитудой
     if result.get("chosen_side"):
@@ -1207,33 +1530,74 @@ st.markdown(f"""
 # ЭКРАН 1: ВЫБОР УПРАЖНЕНИЯ (ШИРОКАЯ СЕТКА, КАРТОЧКИ 360px, КРУГ 120px, ШРИФТ 26px)
 # ==============================================================================
 if st.session_state["selected_exercise"] is None:
-    st.markdown(f"""
-    <div style="font-size: 32px; font-weight: 800; color: #0F172A; text-align: center; margin: 10px 0 20px 0;">
-        {t['screen1_title']}
-    </div>
-    """, unsafe_allow_html=True)
+    # ── Загрузка данных прогресса для дневного To-Do плана ──
+    progress_data = load_progress()
+    today_iso = datetime.date.today().isoformat()
+    exercise_keys = ["E01", "E02", "E03", "E04"]
+    
+    ex_stats_map = {}
+    completed_today_count = 0
+    for ex_key in exercise_keys:
+        st_data = get_exercise_stats(progress_data, ex_key, today_iso)
+        ex_stats_map[ex_key] = st_data
+        if st_data["completed_today"]:
+            completed_today_count += 1
+            
+    plan_total = len(exercise_keys)
+    plan_ratio = int((completed_today_count / plan_total) * 100)
+    plan_phrase = t["daily_plan_done_all"] if completed_today_count == plan_total else t["daily_plan_sub"]
+    
+    # ── Крупная светлая карточка «План на сегодня» ──
+    daily_card_html = (
+        f'<div class="daily-plan-card">'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 12px;">'
+        f'<div>'
+        f'<div style="font-size: 26px; font-weight: 800; color: #0F172A; display: flex; align-items: center; gap: 10px;">'
+        f'<span>📋</span> <span>{t["daily_plan_title"]}</span>'
+        f'</div>'
+        f'<div style="font-size: 19px; color: #475569; font-weight: 500; margin-top: 4px;">{plan_phrase}</div>'
+        f'</div>'
+        f'<div style="background: #F0FDFA; border: 2px solid #99F6E4; border-radius: 16px; padding: 10px 24px; text-align: center; min-width: 140px;">'
+        f'<div style="font-size: 34px; font-weight: 900; color: #0E7490; line-height: 1;">{completed_today_count} / {plan_total}</div>'
+        f'<div style="font-size: 15px; font-weight: 700; color: #0D9488; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;">{t["today_counter_label"]}</div>'
+        f'</div>'
+        f'</div>'
+        f'<div style="width: 100%; height: 18px; background-color: #E2E8F0; border-radius: 10px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,0.06);">'
+        f'<div style="width: {plan_ratio}%; height: 100%; background: linear-gradient(90deg, #10B981 0%, #059669 100%); border-radius: 10px; transition: width 0.5s ease;"></div>'
+        f'</div>'
+        f'</div>'
+    )
+    st.markdown(daily_card_html, unsafe_allow_html=True)
+
+    title_html = f'<div style="font-size: 32px; font-weight: 800; color: #0F172A; text-align: center; margin: 10px 0 20px 0;">{t["screen1_title"]}</div>'
+    st.markdown(title_html, unsafe_allow_html=True)
     
     col1, col2, col3, col4 = st.columns(4, gap="medium")
     cols = [col1, col2, col3, col4]
-    exercise_keys = ["E01", "E02", "E03", "E04"]
     
     for idx, ex_id in enumerate(exercise_keys):
         ex_info = EXERCISES[ex_id]
         ex_title = ex_info[lang]["title"]
         card_class = f"card-{ex_id.lower()}"
+        ex_stat = ex_stats_map[ex_id]
+        
+        if ex_stat["completed_today"]:
+            badge_html = f'<span class="exercise-card-status-done">{t["card_status_done"]} • {ex_stat["today_pct"]}%</span>'
+        else:
+            prev_line = f'<span class="exercise-card-prev-line">{t["card_prev_result"].format(pct=ex_stat["past_pct"])}</span>' if ex_stat["past_pct"] else ""
+            badge_html = f'<span class="exercise-card-status-todo">{t["card_status_todo"]}{prev_line}</span>'
         
         with cols[idx]:
-            card_html = f"""
-            <a href="?ex={ex_id}&lang={lang}" target="_self" class="exercise-card-link">
-                <div class="exercise-card {card_class}">
-                    <div class="exercise-card-badge">{ex_info['code']}</div>
-                    <div class="exercise-card-circle">
-                        {ex_info['svg']}
-                    </div>
-                    <div class="exercise-card-title">{ex_title}</div>
-                </div>
-            </a>
-            """
+            card_html = (
+                f'<a href="?ex={ex_id}&lang={lang}" target="_self" class="exercise-card-link">'
+                f'<span class="exercise-card {card_class}">'
+                f'<span class="exercise-card-badge">{ex_info["code"]}</span>'
+                f'<span class="exercise-card-circle">{ex_info["svg"]}</span>'
+                f'<span class="exercise-card-title">{ex_title}</span>'
+                f'{badge_html}'
+                f'</span>'
+                f'</a>'
+            )
             st.markdown(card_html, unsafe_allow_html=True)
 
 # ==============================================================================
@@ -1252,6 +1616,7 @@ else:
                 del st.query_params["ex"]
             st.session_state["selected_exercise"] = None
             st.session_state["analysis_result"] = None
+            st.session_state["last_voice_key"] = None
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with nav_col2:
@@ -1293,6 +1658,15 @@ else:
                     {t.get('repeat_reminder', '💡 Выполните 3 плавных повторения без пауз')}
                 </div>
                 """, unsafe_allow_html=True)
+
+            # Кнопка повторного прослушивания голосовой инструкции (без визуального плеера)
+            if current_ex_lang.get("voice_text"):
+                st.write("")
+                st.markdown('<div class="screen2-btn-wrapper">', unsafe_allow_html=True)
+                if st.button(t["replay_voice_btn"], type="secondary", use_container_width=True, key=f"replay_voice_{current_ex_id}"):
+                    st.session_state["force_voice_replay"] = True
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
             
             ref_path_specific = f"reference_{current_ex_id.lower()}.mp4"
             ref_path_default = "reference_e02.mp4"
@@ -1311,6 +1685,7 @@ else:
             if st.session_state["analysis_result"] is None:
                 # Плейсхолдер для видеопотока — стоит ВЫШЕ кнопки, сразу виден без скролла
                 image_placeholder = st.empty()
+                cam_audio_ph = st.empty()
                 status_box = st.empty()
                 progress_bar_ph = st.empty()
                 
@@ -1343,6 +1718,10 @@ else:
                 if start_camera:
                     st.toast(t["camera_starting"], icon="📹")
                     startup_notice = status_box.info(f"📹 **{t['camera_starting']}**")
+                    cam_audio_bytes = generate_speech(t["camera_voice_prompt"], lang)
+                    if cam_audio_bytes:
+                        with cam_audio_ph:
+                            play_hidden_audio(cam_audio_bytes, uid=f"cam_{time.time_ns()}")
                     
                     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -1591,3 +1970,20 @@ else:
             
             else:
                 render_analysis_view(st.session_state["analysis_result"], t)
+
+    # Отложенная невидимая озвучка в самом конце скрипта (чтобы UI и кнопка записи появлялись мгновенно)
+    if st.session_state["analysis_result"] is None:
+        voice_text = current_ex_lang.get("voice_text", "")
+        if voice_text:
+            voice_key = f"{current_ex_id}_{lang}"
+            should_autoplay = (
+                st.session_state.get("last_voice_key") != voice_key
+                or st.session_state.pop("force_voice_replay", False)
+            )
+            if should_autoplay:
+                st.session_state["last_voice_key"] = voice_key
+                audio_bytes = generate_speech(voice_text, lang)
+                if audio_bytes:
+                    nonce = st.session_state.get("tts_nonce", 0) + 1
+                    st.session_state["tts_nonce"] = nonce
+                    play_hidden_audio(audio_bytes, uid=f"{voice_key}_{nonce}")
