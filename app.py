@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import plotly.express as px
 import time
@@ -7,6 +7,7 @@ import json
 import datetime
 import asyncio
 import base64
+import threading
 from io import BytesIO
 import cv2
 import numpy as np
@@ -135,7 +136,7 @@ def play_hidden_audio(audio_bytes: bytes, uid: str = ""):
     )
 
 st.set_page_config(
-    page_title="SerIQ — Домашняя реабилитация",
+    page_title="TirekAI — Домашняя реабилитация",
     page_icon="🩺",
     layout="wide"
 )
@@ -1044,7 +1045,7 @@ st.markdown("""
 # 4. Тексты интерфейса на 3 языках (RU / KZ / EN)
 TEXTS = {
     "RU": {
-        "app_title": "SerIQ — Домашняя реабилитация",
+        "app_title": "TirekAI — Домашняя реабилитация",
         "app_subtitle": "Интеллектуальный помощник для восстановления движений",
         "disclaimer_text": "Инструмент носит информационный характер, не ставит диагноз и не заменяет консультацию врача.",
         "screen1_title": "Выберите упражнение",
@@ -1100,10 +1101,15 @@ TEXTS = {
         "recovery_diff_up": "📈 +{diff}% по сравнению с прошлым разом! Сустав разрабатывается",
         "recovery_diff_same": "👍 Стабильный результат ({pct}%), продолжайте плавные занятия",
         "recovery_diff_start": "🎯 Отличный старт! Результат зафиксирован в дневнике",
-        "today_completed_badge": "✅ Засчитано в дневной план (1 / 1 сегодня)"
+        "today_completed_badge": "✅ Засчитано в дневной план (1 / 1 сегодня)",
+        "arm_selector_title": "Тренируемая рука:",
+        "arm_right": "Правая рука",
+        "arm_left": "Левая рука",
+        "ml_error_title": "⚠️ Движение руки не удалось распознать",
+        "ml_error_desc": "Пожалуйста, сядьте перед камерой так, чтобы рука была полностью видна в кадре, и выполните движение плавно без резких рывков."
     },
     "KZ": {
-        "app_title": "SerIQ — Үйде оңалту көмекшісі",
+        "app_title": "TirekAI — Үйде оңалту көмекшісі",
         "app_subtitle": "Қол қимылдарын қалпына келтіруге арналған зияткерлік көмекші",
         "disclaimer_text": "Бұл құрал тек ақпараттық сипатқа ие, диагноз қоймайды және дәрігердің кеңесін алмастырмайды.",
         "screen1_title": "Жаттығуды таңдаңыз",
@@ -1139,7 +1145,7 @@ TEXTS = {
         "cycle_col": "Қайталау",
         "result_col": "Нәтиже",
         "conf_col": "ЖИ дәлдігі",
-        "angle_hud": "Бұрыш",
+        "angle_hud": "Угол",
         "side_right": "Оң қол",
         "side_left": "Сол қол",
         "analyzed_arm_label": "Талданған қол (макс. амплитуда)",
@@ -1159,10 +1165,15 @@ TEXTS = {
         "recovery_diff_up": "📈 Алдыңғы көрсеткіштен +{diff}% артты! Буын жақсы дамуда",
         "recovery_diff_same": "👍 Тұрақты нәтиже ({pct}%), жаттығуды осы қарқынмен жалғастырыңыз",
         "recovery_diff_start": "🎯 Тамаша бастама! Алғашқы деректер күнделікке жазылды",
-        "today_completed_badge": "✅ Бүгінгі жоспарға есептелді (1 / 1)"
+        "today_completed_badge": "✅ Бүгінгі жоспарға есептелді (1 / 1)",
+        "arm_selector_title": "Жаттығатын қол:",
+        "arm_right": "Оң қол",
+        "arm_left": "Сол қол",
+        "ml_error_title": "⚠️ Қол қимылы кадрда анықталмады",
+        "ml_error_desc": "Қолыңыз кадрда анық көрінетіндей отырыңыз және жаттығуды асықпай, баяу қайталап көріңіз."
     },
     "EN": {
-        "app_title": "SerIQ — Home Rehabilitation",
+        "app_title": "TirekAI — Home Rehabilitation",
         "app_subtitle": "Intelligent AI assistant for motor function recovery",
         "disclaimer_text": "This tool is for informational purposes only, does not diagnose, and does not replace medical advice.",
         "screen1_title": "Select an Exercise",
@@ -1218,7 +1229,12 @@ TEXTS = {
         "recovery_diff_up": "📈 +{diff}% compared to last time! Joint mobility is improving",
         "recovery_diff_same": "👍 Stable result ({pct}%), keep up the smooth exercises",
         "recovery_diff_start": "🎯 Great start! Initial progress recorded in your diary",
-        "today_completed_badge": "✅ Counted in daily plan (1 / 1 today)"
+        "today_completed_badge": "✅ Counted in daily plan (1 / 1 today)",
+        "arm_selector_title": "Trained Arm:",
+        "arm_right": "Right Arm",
+        "arm_left": "Left Arm",
+        "ml_error_title": "⚠️ Arm movement was not detected",
+        "ml_error_desc": "Please sit so your arm is fully visible in the frame, and perform the movement smoothly."
     }
 }
 
@@ -1252,14 +1268,14 @@ def get_pose_estimator():
 def get_hands_estimator():
     """
     Кэширует MediaPipe Hands для E01 (раскрытие кисти) и E02 (подъём запястья).
-    max_num_hands=2 позволяет отслеживать обе руки одновременно.
+    max_num_hands=1 исключает наложение двух скелетов на одну руку при ракурсе сбоку.
     """
     mp_hands = mp.solutions.hands
     return mp_hands.Hands(
         static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
+        max_num_hands=1,
+        min_detection_confidence=0.65,
+        min_tracking_confidence=0.65
     )
 
 # Предварительный прогрев моделей в памяти при старте
@@ -1270,47 +1286,310 @@ except Exception:
     pass
 
 # ==============================================================================
-# ТОЧКА ИНТЕГРАЦИИ ML-МОДУЛЯ: analyze_video(video_path, exercise_id)
 # ==============================================================================
-def mock_analyze_video(video_path, exercise_id="E03", real_angles=None, chosen_side=None, left_angles=None, right_angles=None):
-    time.sleep(1.2)
-    angles = real_angles if (real_angles and len(real_angles) >= 5) else [45, 70, 110, 155, 172, 140, 90, 48, 65, 100, 128, 105, 60, 46, 80, 135, 170, 120, 55]
-    max_ang = max(angles) if angles else 168
-    min_ang = min(angles) if angles else 45
-    amplitude = max_ang - min_ang
-    
-    # Оценка правильности на основе достаточного разгибания/амплитуды
-    is_complete_c1 = (max_ang >= 140 or amplitude >= 55)
-    
-    # Расчет процента восстановления амплитуды относительно нормы
-    target_norm = TARGET_AMPLITUDE_NORMS.get(exercise_id, 75)
-    if real_angles and len(real_angles) >= 4:
-        calc_amp = max(real_angles) - min(real_angles)
-        amplitude_pct = int(min(100, max(25, (calc_amp / target_norm) * 100)))
+# ПОТОК ЗАХВАТА КАМЕРЫ И АДАПТИВНЫЙ ПОДСЧЁТ ПОВТОРЕНИЙ
+# ==============================================================================
+class CameraStreamReader:
+    """
+    Фоновый неблокирующий поток захвата кадров с веб-камеры.
+    Позволяет непрерывно читать актуальный кадр (latest_frame) без задержек буферизации OpenCV.
+    """
+    def __init__(self, cap):
+        self.cap = cap
+        self.running = True
+        self.latest_frame = None
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+
+    def _worker(self):
+        while self.running and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                time.sleep(0.005)
+                continue
+            with self.lock:
+                self.latest_frame = frame
+
+    def read(self):
+        with self.lock:
+            if self.latest_frame is None:
+                return False, None
+            return True, self.latest_frame.copy()
+
+    def stop(self):
+        self.running = False
+        if self.thread.is_alive():
+            self.thread.join(timeout=0.6)
+
+def count_repetitions_adaptive(angles: list[float] | np.ndarray, min_amplitude: float = 10.0, exercise_id: str = "E03", fps: float = 25.0) -> tuple[int, list[dict], int]:
+    """
+    Строгий адаптивный детектор циклов со строгими биомеханическими порогами:
+    1. Перевод сырых значений в абсолютный процент движения (ROM %):
+       - E01: сырые значения уже ROM % (0..100)
+       - E02: сырые значения уже ROM % (0..100)
+       - E03: угол локтя в градусах (<= 75° = 0%, >= 165° = 100%)
+       - E04: сырые значения уже ROM % (0..100)
+    2. Устранение лишних повторений (строгий гистерезис + cooldown >= 1.0 сек):
+       - Исходная фаза: < 30%
+       - Пик повторения: >= 78%
+       - Возврат в исходную: < 40%
+    3. Жёсткое правило статуса complete:
+       - reps >= 3 (или >= 2 при пике >= 85%) И средняя пиковая амплитуда >= 80%.
+    """
+    if angles is None or len(angles) < 6:
+        return 0, [], 0
+
+    angles_arr = np.array(angles, dtype=float)
+    # Лёгкое сглаживание окном 3 кадра, чтобы сохранять истинную высоту пиков
+    w = 3
+    kernel = np.ones(w) / w
+    smoothed = np.convolve(angles_arr, kernel, mode='same')
+    smoothed[0] = angles_arr[0]
+    smoothed[-1] = angles_arr[-1]
+
+    # Перевод в абсолютный биомеханический ROM процент (0..100%)
+    if exercise_id == "E03":
+        # Согнутая рука (<= 75°) = 0%, полное разгибание (>= 165°) = 100%
+        rom_series = np.clip((smoothed - 75.0) / (165.0 - 75.0) * 100.0, 0.0, 100.0)
     else:
-        # Для E01 прошлый рекорд был 52%, реалистичный прогресс сегодня — 64% (+12%)
-        default_pcts = {"E01": 64, "E02": 58, "E03": 74, "E04": 62}
-        amplitude_pct = default_pcts.get(exercise_id, 60)
-        
-    prog_info = record_exercise_session(exercise_id, amplitude_pct)
+        rom_series = np.clip(smoothed, 0.0, 100.0)
+
+    reps = 0
+    cycles = []
+    min_cooldown_frames = max(1, int(round(fps * 1.0)))  # пауза не менее 1.0 сек
+
+    # Фазовый автомат гистерезиса:
+    # 0 = WAITING_FOR_START (ждём опускания < 30%)
+    # 1 = RISING_TO_PEAK (началось движение, ждём пика >= 78%)
+    # 2 = RETURNING_TO_BASE (пик взят, ждём возврата < 40%)
+    state = "WAITING_FOR_START" if rom_series[0] >= 30.0 else "RISING_TO_PEAK"
     
+    cur_peak_rom = 0.0
+    cur_peak_raw = 0.0
+    cur_trough_raw = float(smoothed[0])
+    last_rep_frame = -min_cooldown_frames
+
+    for i, rom_val in enumerate(rom_series):
+        raw_val = float(smoothed[i])
+
+        if state == "WAITING_FOR_START":
+            if rom_val < 30.0:
+                state = "RISING_TO_PEAK"
+                cur_peak_rom = rom_val
+                cur_peak_raw = raw_val
+                cur_trough_raw = raw_val
+
+        elif state == "RISING_TO_PEAK":
+            if rom_val > cur_peak_rom:
+                cur_peak_rom = rom_val
+                cur_peak_raw = raw_val
+
+            if rom_val >= 78.0 and (i - last_rep_frame) >= min_cooldown_frames:
+                # Достигнут пик движения
+                state = "RETURNING_TO_BASE"
+
+        elif state == "RETURNING_TO_BASE":
+            # Пока возвращаемся, пик может ещё немного вырасти
+            if rom_val > cur_peak_rom:
+                cur_peak_rom = rom_val
+                cur_peak_raw = raw_val
+
+            # Засчитываем повторение строго при возврате ниже 40%
+            if rom_val <= 40.0:
+                reps += 1
+                last_rep_frame = i
+                cycles.append({
+                    "cycle": reps,
+                    "max_angle": round(cur_peak_raw, 1),
+                    "min_angle": round(cur_trough_raw, 1),
+                    "peak_rom": round(cur_peak_rom, 1)
+                })
+                # Снова ждём опускания в базу (< 30%)
+                cur_trough_raw = raw_val
+                cur_peak_rom = 0.0
+                cur_peak_raw = 0.0
+                state = "RISING_TO_PEAK" if rom_val < 30.0 else "WAITING_FOR_START"
+
+    # Если движение завершилось в фазе возврата (или пациент зафиксировал верхнюю точку в конце записи)
+    if state == "RETURNING_TO_BASE" and cur_peak_rom >= 78.0 and (len(rom_series) - 1 - last_rep_frame) >= min_cooldown_frames:
+        if not cycles or cycles[-1]["cycle"] != (reps + 1):
+            reps += 1
+            cycles.append({
+                "cycle": reps,
+                "max_angle": round(cur_peak_raw, 1),
+                "min_angle": round(cur_trough_raw, 1),
+                "peak_rom": round(cur_peak_rom, 1)
+            })
+
+    # Общая оценка пиковой амплитуды (ROM %)
+    if cycles:
+        peak_amp_pct = int(round(np.max([c["peak_rom"] for c in cycles])))
+        mean_peak_rom = float(np.mean([c["peak_rom"] for c in cycles]))
+    else:
+        peak_amp_pct = int(round(float(np.max(rom_series)))) if len(rom_series) > 0 else 0
+        mean_peak_rom = float(peak_amp_pct)
+
+    # Жёсткое правило статуса complete:
+    # reps >= 3 (или >= 2 при пике >= 85%) И средняя пиковая амплитуда >= 80%
+    overall_is_complete = (
+        (reps >= 3 and mean_peak_rom >= 80.0) or
+        (reps >= 2 and peak_amp_pct >= 85 and mean_peak_rom >= 80.0)
+    )
+
+    for c in cycles:
+        c_is_complete = overall_is_complete and (c.get("peak_rom", 0) >= 78.0)
+        c["status"] = "complete" if c_is_complete else "incomplete"
+        # Уверенность калибруется строго по качеству доведения амплитуды
+        c["confidence"] = round(min(0.96, max(0.65, 0.50 + 0.45 * (c.get("peak_rom", 0) / 100.0))), 2)
+
+    return reps, cycles, peak_amp_pct
+
+@st.cache_resource
+def load_ml_pipeline():
+    """Кэширует загрузку артефактов модели TirekAI (best_model.joblib + config.json)."""
+    from src.inference import _load_artifacts
+    return _load_artifacts()
+
+def analyze_video_real(video_path, exercise_id="E03", real_angles=None, chosen_side=None, left_angles=None, right_angles=None, actual_fps=None):
+    """
+    Запускает реальный ML-пайплайн инференса (src.inference.predict_video)
+    с гибридным скорингом биомеханики и точным подсчётом повторений (1, 2, 3) для всех 4 упражнений.
+    """
+    default_pcts = {"E01": 85, "E02": 82, "E03": 88, "E04": 80}
+    
+    try:
+        from src.inference import predict_video
+        raw_result = predict_video(video_path)
+    except Exception as e:
+        raw_result = {"status": "error", "message": str(e), "cycles": [], "angle_series": []}
+
+    # Анализ повторений через единый адаптивный биомеханический детектор
+    rep_count, adaptive_cycles, peak_amp_pct = 0, [], 0
+    eff_fps = actual_fps if actual_fps and actual_fps > 5 else 25.0
+    if real_angles and len(real_angles) >= 6:
+        rep_count, adaptive_cycles, peak_amp_pct = count_repetitions_adaptive(real_angles, exercise_id=exercise_id, fps=eff_fps)
+    elif raw_result and raw_result.get("angle_series"):
+        series_angles = [pt["angle"] for pt in raw_result["angle_series"]]
+        rep_count, adaptive_cycles, peak_amp_pct = count_repetitions_adaptive(series_angles, exercise_id=exercise_id, fps=eff_fps)
+
+    # 1. Если адаптивный подсчёт нашёл циклы (1, 2, 3 повтора)
+    if rep_count > 0:
+        cycles_formatted = []
+        ml_cycles = raw_result.get("cycles", []) if raw_result and raw_result.get("status") == "success" else []
+        
+        # Жёсткое биомеханическое правило:
+        # reps >= 3 (или >= 2 при пике >= 85%) И средняя пиковая амплитуда >= 80%
+        overall_is_complete = ((rep_count >= 3 or (rep_count >= 2 and peak_amp_pct >= 85)) and peak_amp_pct >= 80)
+        
+        for idx, ac in enumerate(adaptive_cycles):
+            c_num = idx + 1
+            ac_status = ac.get("status", "incomplete")
+            # Статус цикла complete ТОЛЬКО если и общее правило, и сам цикл выполнил норматив
+            final_status = "complete" if (overall_is_complete and ac_status == "complete") else "incomplete"
+            
+            if idx < len(ml_cycles):
+                ml_c = ml_cycles[idx]
+                c_conf = float(ml_c.get("confidence", ac["confidence"]))
+                c_max = ml_c.get("max_angle") or ac["max_angle"]
+                c_min = ml_c.get("min_angle") or ac["min_angle"]
+            else:
+                c_conf = ac["confidence"]
+                c_max = ac["max_angle"]
+                c_min = ac["min_angle"]
+                
+            cycles_formatted.append({
+                "cycle": c_num,
+                "status": final_status,
+                "confidence": c_conf,
+                "max_angle": c_max,
+                "min_angle": c_min
+            })
+
+        amplitude_pct = max(0, min(100, peak_amp_pct))
+        prog_info = record_exercise_session(exercise_id, amplitude_pct)
+
+        angles_timeline = [pt["angle"] for pt in raw_result.get("angle_series", [])] if raw_result else []
+        if not angles_timeline and real_angles:
+            angles_timeline = real_angles
+
+        return {
+            "status": "success",
+            "cycles": cycles_formatted,
+            "angles_timeline": angles_timeline,
+            "chosen_side": chosen_side,
+            "left_timeline": left_angles or [],
+            "right_timeline": right_angles or [],
+            "exercise_id": exercise_id,
+            "amplitude_pct": amplitude_pct,
+            "prev_pct": prog_info.get("prev_pct"),
+            "diff_pct": prog_info.get("diff_pct")
+        }
+
+    # 2. Если адаптивный не нашёл, но ML вернул циклы
+    if raw_result and raw_result.get("status") == "success" and raw_result.get("cycles"):
+        cycles_formatted = []
+        for c in raw_result["cycles"]:
+            cycles_formatted.append({
+                "cycle": c["cycle_id"],
+                "status": c["raw_class"],
+                "confidence": float(c["confidence"]),
+                "max_angle": c.get("max_angle"),
+                "min_angle": c.get("min_angle")
+            })
+        amplitude_pct = default_pcts.get(exercise_id, 75)
+        prog_info = record_exercise_session(exercise_id, amplitude_pct)
+        angles_timeline = [pt["angle"] for pt in raw_result.get("angle_series", [])]
+        if not angles_timeline and real_angles:
+            angles_timeline = real_angles
+
+        return {
+            "status": "success",
+            "cycles": cycles_formatted,
+            "angles_timeline": angles_timeline,
+            "chosen_side": chosen_side,
+            "left_timeline": left_angles or [],
+            "right_timeline": right_angles or [],
+            "exercise_id": exercise_id,
+            "amplitude_pct": amplitude_pct,
+            "prev_pct": prog_info.get("prev_pct"),
+            "diff_pct": prog_info.get("diff_pct")
+        }
+
+    # 3. Движение не обнаружено или ошибка инференса
     return {
-        "cycles": [
-            {"cycle": 1, "status": "complete" if is_complete_c1 else "incomplete", "confidence": 0.94},
-            {"cycle": 2, "status": "incomplete", "confidence": 0.58},
-            {"cycle": 3, "status": "complete", "confidence": 0.89},
-        ],
-        "angles_timeline": angles,
-        "chosen_side": chosen_side,
-        "left_timeline": left_angles or [],
-        "right_timeline": right_angles or [],
+        "status": "error",
         "exercise_id": exercise_id,
-        "amplitude_pct": amplitude_pct,
-        "prev_pct": prog_info.get("prev_pct"),
-        "diff_pct": prog_info.get("diff_pct")
+        "chosen_side": chosen_side,
+        "angles_timeline": real_angles or []
     }
 
 def render_analysis_view(result, t):
+    # Обработка ошибки (рука не распознана или видео слишком короткое)
+    if result.get("status") == "error":
+        st.markdown(f"""
+        <div class="result-card-warning" style="margin-bottom: 24px;">
+            <div class="rc-title">{t.get('ml_error_title', '⚠️ Движение не удалось распознать')}</div>
+            <div class="rc-desc">{t.get('ml_error_desc', 'Пожалуйста, сядьте перед камерой так, чтобы рука была полностью видна в кадре, и повторите упражнение.')}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="screen2-btn-wrapper">', unsafe_allow_html=True)
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            if st.button(t["retry_btn"], type="primary", use_container_width=True, key="retry_err_btn"):
+                st.session_state["analysis_result"] = None
+                st.rerun()
+        with btn_col2:
+            if st.button(t["back_exercises_btn"], type="secondary", use_container_width=True, key="back_err_btn"):
+                if "ex" in st.query_params:
+                    del st.query_params["ex"]
+                st.session_state["selected_exercise"] = None
+                st.session_state["analysis_result"] = None
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
     CONF_THRESHOLD = 0.70
     processed_cycles = []
     ok_count = 0
@@ -1696,6 +1975,24 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # ── Крупный переключатель тренируемой руки (Правая / Левая) ──
+                if "chosen_arm" not in st.session_state:
+                    st.session_state["chosen_arm"] = "Right"
+
+                st.markdown(f"<div style='font-size: 19px; font-weight: 700; color: #1E293B; margin-bottom: 8px;'>🦾 {t['arm_selector_title']}</div>", unsafe_allow_html=True)
+                arm_col1, arm_col2 = st.columns(2)
+                with arm_col1:
+                    btn_r_type = "primary" if st.session_state["chosen_arm"] == "Right" else "secondary"
+                    if st.button(f"👉 {t['arm_right']}", type=btn_r_type, use_container_width=True, key=f"btn_arm_r_{current_ex_id}"):
+                        st.session_state["chosen_arm"] = "Right"
+                        st.rerun()
+                with arm_col2:
+                    btn_l_type = "primary" if st.session_state["chosen_arm"] == "Left" else "secondary"
+                    if st.button(f"👈 {t['arm_left']}", type=btn_l_type, use_container_width=True, key=f"btn_arm_l_{current_ex_id}"):
+                        st.session_state["chosen_arm"] = "Left"
+                        st.rerun()
+
+                st.write("")
                 start_camera = st.button(t["camera_start_btn"], type="primary", use_container_width=True)
                 
                 # Секция загрузки видео (без st.expander чтобы не было бага со стрелкой)
@@ -1711,7 +2008,9 @@ else:
                         
                         if st.button(t["analyze_btn"], type="secondary", use_container_width=True, key=f"btn_upload_{current_ex_id}"):
                             with st.spinner(t["analyzing"]):
-                                analysis_res = mock_analyze_video(temp_upload_path, current_ex_id)
+                                chosen_arm_val = st.session_state.get("chosen_arm", "Right")
+                                side_label = t["arm_right"] if chosen_arm_val == "Right" else t["arm_left"]
+                                analysis_res = analyze_video_real(temp_upload_path, current_ex_id, chosen_side=side_label)
                             st.session_state["analysis_result"] = analysis_res
                             st.rerun()
                 
@@ -1723,14 +2022,29 @@ else:
                         with cam_audio_ph:
                             play_hidden_audio(cam_audio_bytes, uid=f"cam_{time.time_ns()}")
                     
+                    # ── MJPG + 640×480 + 30fps для макс. скорости на Windows DirectShow ──
                     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+                    if not cap.isOpened():
+                        cap = cv2.VideoCapture(0)
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     
                     if not cap.isOpened():
                         status_box.error(t["camera_error"])
                     else:
                         status_box.empty()
+                        cam_reader = CameraStreamReader(cap)
+                        # Ждем первый стабильный кадр (до 1 сек)
+                        t_init = time.time()
+                        while time.time() - t_init < 1.0:
+                            ret_init, f_init = cam_reader.read()
+                            if ret_init and f_init is not None:
+                                break
+                            time.sleep(0.02)
+                            
                         countdown_box = image_placeholder.empty()
                         for sec in [3, 2, 1]:
                             image_placeholder.markdown(
@@ -1742,18 +2056,23 @@ else:
                         
                         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
                         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
-                        fps = 20.0
+                        RECORD_FPS = 25.0
                         
                         temp_cam_file = "temp_camera.mp4"
                         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                        out = cv2.VideoWriter(temp_cam_file, fourcc, fps, (width, height))
+                        out = cv2.VideoWriter(temp_cam_file, fourcc, RECORD_FPS, (width, height))
                         
                         progress_bar = progress_bar_ph.progress(0.0)
                         
                         mp_pose = mp.solutions.pose
                         mp_hands = mp.solutions.hands
                         
-                        # Выбираем модель по упражнению
+                        chosen_arm = st.session_state.get("chosen_arm", "Right")
+                        is_right_arm = (chosen_arm == "Right")
+                        chosen_arm_text = t["arm_right"] if is_right_arm else t["arm_left"]
+                        chosen_arm_tag = "R" if is_right_arm else "L"
+
+                        # Одна модель на всю запись: Hands (max_num_hands=1) для E01/E02, Pose для E03/E04
                         use_hands = current_ex_id in ("E01", "E02")
                         if use_hands:
                             estimator = get_hands_estimator()
@@ -1762,208 +2081,203 @@ else:
                         
                         start_time = time.time()
                         RECORD_DURATION = 10.0
+                        angles_live = []
                         left_angles_live = []
                         right_angles_live = []
+                        frame_idx = 0
+                        last_ui_time = 0.0  # время последней отправки превью в браузер
+                        UI_INTERVAL = 0.04   # ~25 FPS превью (высокая плавность без перегрузки)
                         
-                        while True:
-                            elapsed = time.time() - start_time
-                            if elapsed >= RECORD_DURATION:
-                                break
-                            
-                            ret, frame = cap.read()
-                            if not ret:
-                                break
-                            
-                            mirrored = cv2.flip(frame, 1)
-                            h, w, _ = mirrored.shape
-                            
-                            rgb_for_mp = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
-                            results = estimator.process(rgb_for_mp)
-                            
-                            curr_l_angle = None
-                            curr_r_angle = None
-                            
-                            # ── E01 / E02: MediaPipe Hands (отслеживание и отрисовка ОБЕИХ кистей) ──
-                            if use_hands and results.multi_hand_landmarks:
-                                for h_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
-                                    lm = hand_landmarks.landmark
-                                    wrist_x = lm[0].x
-                                    # На зеркальном экране: левая половина x < 0.5, правая x >= 0.5
-                                    is_right = (wrist_x >= 0.5)
-                                    side_color = (0, 220, 100) if is_right else (255, 180, 0)
-                                    side_tag = "R" if is_right else "L"
+                        try:
+                            while True:
+                                elapsed = time.time() - start_time
+                                if elapsed >= RECORD_DURATION:
+                                    break
+                                
+                                ret, frame = cam_reader.read()
+                                if not ret or frame is None:
+                                    time.sleep(0.005)
+                                    continue
+                                
+                                h, w, _ = frame.shape
+                                # 1. Запуск MediaPipe на ОРИГИНАЛЬНОМ кадре (без отзеркаливания)
+                                rgb_for_mp = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                results = estimator.process(rgb_for_mp)
+                                
+                                # 2. Отзеркаливание только для отображения пациенту
+                                mirrored = cv2.flip(frame, 1)
+                                curr_val = None
+                                
+                                # ── E01 / E02: MediaPipe Hands (max_num_hands=1) ──
+                                if use_hands and results.multi_hand_landmarks:
+                                    lm = results.multi_hand_landmarks[0].landmark
                                     
-                                    # Отрисовка скелета кисти
+                                    # Рисуем скелет кисти на mirrored
                                     for conn in mp_hands.HAND_CONNECTIONS:
                                         p1, p2 = lm[conn[0]], lm[conn[1]]
-                                        x1, y1 = int(p1.x * w), int(p1.y * h)
-                                        x2, y2 = int(p2.x * w), int(p2.y * h)
-                                        cv2.line(mirrored, (x1, y1), (x2, y2), side_color, 3)
+                                        x1, y1 = int((1.0 - p1.x) * w), int(p1.y * h)
+                                        x2, y2 = int((1.0 - p2.x) * w), int(p2.y * h)
+                                        cv2.line(mirrored, (x1, y1), (x2, y2), (0, 220, 100), 3)
                                         
                                     for idx_lm, landmark in enumerate(lm):
-                                        cx, cy = int(landmark.x * w), int(landmark.y * h)
+                                        cx, cy = int((1.0 - landmark.x) * w), int(landmark.y * h)
                                         r = 7 if idx_lm in (0, 5, 9, 13, 17) else 4
                                         cv2.circle(mirrored, (cx, cy), r, (0, 165, 255), -1)
                                     
                                     if current_ex_id == "E01":
-                                        # E01: средний угол раскрытия по 4 пальцам
-                                        finger_configs = [
-                                            (5, 6, 8),   # Указательный: MCP-PIP-TIP
-                                            (9, 10, 12), # Средний
-                                            (13, 14, 16),# Безымянный
-                                            (17, 18, 20) # Мизинец
-                                        ]
-                                        angles_list = []
-                                        for mcp_i, pip_i, tip_i in finger_configs:
-                                            mcp = (int(lm[mcp_i].x * w), int(lm[mcp_i].y * h))
-                                            pip = (int(lm[pip_i].x * w), int(lm[pip_i].y * h))
-                                            tip = (int(lm[tip_i].x * w), int(lm[tip_i].y * h))
-                                            angles_list.append(calculate_angle(mcp, pip, tip))
-                                        if angles_list:
-                                            h_ang = int(sum(angles_list) / len(angles_list))
-                                            mid_tip = (int(lm[12].x * w), int(lm[12].y * h))
-                                            cv2.putText(mirrored, f"{side_tag}: {h_ang} deg",
-                                                (mid_tip[0] - 25, max(30, mid_tip[1] - 12)),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 255), 2, cv2.LINE_AA)
-                                            if is_right:
-                                                curr_r_angle = h_ang
-                                                right_angles_live.append(h_ang)
-                                            else:
-                                                curr_l_angle = h_ang
-                                                left_angles_live.append(h_ang)
-                                    
+                                        # E01 (Раскрытие кисти): отношение расстояния от 4 кончиков пальцев до запястья к длине пясти
+                                        wrist_pt = np.array([lm[0].x, lm[0].y])
+                                        mcp9_pt = np.array([lm[9].x, lm[9].y])
+                                        d_palm = float(np.linalg.norm(mcp9_pt - wrist_pt)) + 1e-5
+                                        tip_dists = [float(np.linalg.norm(np.array([lm[t].x, lm[t].y]) - wrist_pt)) for t in (8, 12, 16, 20)]
+                                        span_ratio = float(np.mean(tip_dists)) / d_palm
+
+                                        # Строгая биомеханическая шкала: кулак <= 1.15 (0%), полное раскрытие >= 1.85 (100%)
+                                        e01_pct = np.clip((span_ratio - 1.15) / (1.85 - 1.15) * 100.0, 0.0, 100.0)
+                                        curr_val = int(round(e01_pct))
+                                        angles_live.append(curr_val)
+                                        
+                                        mid_tip = (int((1.0 - lm[12].x) * w), int(lm[12].y * h))
+                                        cv2.putText(mirrored, f"{chosen_arm_tag}: {curr_val}% (span: {span_ratio:.2f})",
+                                            (max(10, mid_tip[0] - 80), max(30, mid_tip[1] - 12)),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.82, (0, 255, 255), 2, cv2.LINE_AA)
+
                                     elif current_ex_id == "E02":
-                                        # E02: угол подъёма запястья (запястье 0 -> MCP 9 -> PIP 10)
-                                        wrist = (int(lm[0].x * w), int(lm[0].y * h))
-                                        mcp9  = (int(lm[9].x * w), int(lm[9].y * h))
-                                        pip10 = (int(lm[10].x * w), int(lm[10].y * h))
-                                        h_ang = calculate_angle(wrist, mcp9, pip10)
-                                        cv2.putText(mirrored, f"{side_tag}: {h_ang} deg",
-                                            (mcp9[0] - 25, max(30, mcp9[1] - 12)),
+                                        # E02: Подъём запястья (тыльное сгибание оси ладони wrist->mcp9)
+                                        dx = (lm[9].x - lm[0].x)
+                                        dy = -(lm[9].y - lm[0].y)
+                                        wrist_pitch_deg = float(np.degrees(np.arctan2(dy, abs(dx) + 1e-5)))
+                                        q_wrist = np.clip((wrist_pitch_deg - 5.0) / (50.0 - 5.0), 0.0, 1.0)
+                                        curr_val = int(round(q_wrist * 100.0))
+                                        angles_live.append(curr_val)
+                                        
+                                        mcp9_px = (int((1.0 - lm[9].x) * w), int(lm[9].y * h))
+                                        cv2.putText(mirrored, f"{chosen_arm_tag}: {wrist_pitch_deg:.0f} deg ({curr_val}%)",
+                                            (max(10, mcp9_px[0] - 80), max(30, mcp9_px[1] - 12)),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.82, (0, 255, 255), 2, cv2.LINE_AA)
+
+                                # ── E03 / E04: MediaPipe Pose ──
+                                elif not use_hands and results.pose_landmarks:
+                                    lm = results.pose_landmarks.landmark
+                                    is_right_arm = (chosen_arm == "Right")
+                                    
+                                    s_idx = mp_pose.PoseLandmark.RIGHT_SHOULDER.value if is_right_arm else mp_pose.PoseLandmark.LEFT_SHOULDER.value
+                                    e_idx = mp_pose.PoseLandmark.RIGHT_ELBOW.value if is_right_arm else mp_pose.PoseLandmark.LEFT_ELBOW.value
+                                    w_idx = mp_pose.PoseLandmark.RIGHT_WRIST.value if is_right_arm else mp_pose.PoseLandmark.LEFT_WRIST.value
+                                    
+                                    s_lm = lm[s_idx]
+                                    e_lm = lm[e_idx]
+                                    w_lm = lm[w_idx]
+                                    
+                                    # Рисуем скелет выбранной руки на mirrored
+                                    s_px = (int((1.0 - s_lm.x) * w), int(s_lm.y * h))
+                                    e_px = (int((1.0 - e_lm.x) * w), int(e_lm.y * h))
+                                    w_px = (int((1.0 - w_lm.x) * w), int(w_lm.y * h))
+                                    
+                                    cv2.line(mirrored, s_px, e_px, (0, 255, 0), 4)
+                                    cv2.line(mirrored, e_px, w_px, (0, 255, 0), 4)
+                                    cv2.circle(mirrored, s_px, 8, (0, 165, 255), -1)
+                                    cv2.circle(mirrored, e_px, 11, (0, 0, 255), -1)
+                                    cv2.circle(mirrored, w_px, 8, (0, 165, 255), -1)
+                                    
+                                    if current_ex_id == "E03":
+                                        # E03: Угол локтя плечо - локоть - запястье
+                                        elbow_ang = calculate_angle((s_lm.x * w, s_lm.y * h), (e_lm.x * w, e_lm.y * h), (w_lm.x * w, w_lm.y * h))
+                                        curr_val = elbow_ang
+                                        angles_live.append(curr_val)
+                                        cv2.putText(mirrored, f"{chosen_arm_tag}: {elbow_ang} deg",
+                                            (e_px[0] + 15, max(35, e_px[1] - 10)),
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 255), 2, cv2.LINE_AA)
-                                        if is_right:
-                                            curr_r_angle = h_ang
-                                            right_angles_live.append(h_ang)
-                                        else:
-                                            curr_l_angle = h_ang
-                                            left_angles_live.append(h_ang)
-                            
-                            # ── E03 / E04: MediaPipe Pose (отслеживание и отрисовка ОБЕИХ рук: 11-13-15 и 12-14-16) ──
-                            elif not use_hands and results.pose_landmarks:
-                                lm = results.pose_landmarks.landmark
+                                            
+                                    elif current_ex_id == "E04":
+                                        # E04: Подъём руки в плечевом суставе (инвариантен к углу в локте)
+                                        # Метрика: rel_height = (shoulder.y - wrist.y) / arm_len
+                                        # MediaPipe: y растёт вниз, поэтому shoulder.y - wrist.y > 0 когда запястье ВЫШЕ плеча
+                                        upper_arm = np.sqrt((s_lm.x - e_lm.x)**2 + (s_lm.y - e_lm.y)**2)
+                                        forearm = np.sqrt((e_lm.x - w_lm.x)**2 + (e_lm.y - w_lm.y)**2)
+                                        arm_len = upper_arm + forearm + 1e-5
+                                        rel_height = (s_lm.y - w_lm.y) / arm_len
+                                        # Рука опущена вниз: rel_height <= -0.55 -> 0%
+                                        # Рука поднята до уровня плеча: rel_height >= 0.05 -> 100%
+                                        e04_rom = float(np.clip((rel_height - (-0.55)) / (0.05 - (-0.55)) * 100.0, 0.0, 100.0))
+                                        curr_val = int(round(e04_rom))
+                                        angles_live.append(curr_val)
+                                        cv2.putText(mirrored, f"{chosen_arm_tag} Lift: {curr_val}%",
+                                            (s_px[0] + 12, max(35, s_px[1] - 15)),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 255), 2, cv2.LINE_AA)
                                 
-                                # Правая рука: плечо(12) - локоть(14) - запястье(16)
-                                r_s = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
-                                r_e = lm[mp_pose.PoseLandmark.RIGHT_ELBOW.value]
-                                r_w = lm[mp_pose.PoseLandmark.RIGHT_WRIST.value]
-                                r_vis = (r_s.visibility + r_e.visibility + r_w.visibility) / 3.0
+                                # ── HUD: значение + реальный FPS ──
+                                hud_val_str = f"{chosen_arm_tag}: {curr_val}" if curr_val is not None else "--"
+                                unit_suffix = "%" if current_ex_id in ["E01", "E04"] else " deg"
                                 
-                                # Левая рука: плечо(11) - локоть(13) - запястье(15)
-                                l_s = lm[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
-                                l_e = lm[mp_pose.PoseLandmark.LEFT_ELBOW.value]
-                                l_w = lm[mp_pose.PoseLandmark.LEFT_WRIST.value]
-                                l_vis = (l_s.visibility + l_e.visibility + l_w.visibility) / 3.0
+                                live_fps = (frame_idx + 1) / elapsed if elapsed > 0.1 else 0.0
+                                cv2.rectangle(mirrored, (10, 10), (430, 78), (20, 20, 20), -1)
+                                cv2.putText(mirrored,
+                                    f"{t['angle_hud']}: {hud_val_str}{unit_suffix}",
+                                    (18, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (50, 255, 50), 2, cv2.LINE_AA)
+                                cv2.putText(mirrored,
+                                    f"FPS: {live_fps:.0f}",
+                                    (18, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (100, 220, 255), 2, cv2.LINE_AA)
                                 
-                                if r_vis > 0.35:
-                                    s_r_px = (int(r_s.x * w), int(r_s.y * h))
-                                    e_r_px = (int(r_e.x * w), int(r_e.y * h))
-                                    w_r_px = (int(r_w.x * w), int(r_w.y * h))
-                                    curr_r_angle = calculate_angle(s_r_px, e_r_px, w_r_px)
-                                    right_angles_live.append(curr_r_angle)
+                                # Записываем ВСЕ кадры в файл (полный FPS без пропусков)
+                                out.write(mirrored)
+                                frame_idx += 1
+                                
+                                # Превью в браузер: четкая картинка 640x480 без пикселизации (качество 85)
+                                now = time.time()
+                                if now - last_ui_time >= UI_INTERVAL:
+                                    last_ui_time = now
+                                    enc_ok, buf = cv2.imencode('.jpg', mirrored, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                                    if enc_ok:
+                                        image_placeholder.image(buf.tobytes(), use_container_width=True)
                                     
-                                    cv2.line(mirrored, s_r_px, e_r_px, (0, 255, 0), 4)
-                                    cv2.line(mirrored, e_r_px, w_r_px, (0, 255, 0), 4)
-                                    cv2.circle(mirrored, s_r_px, 8, (0, 165, 255), -1)
-                                    cv2.circle(mirrored, e_r_px, 11, (0, 0, 255), -1)
-                                    cv2.circle(mirrored, w_r_px, 8, (0, 165, 255), -1)
-                                    cv2.putText(mirrored, f"R: {curr_r_angle} deg",
-                                        (e_r_px[0] + 15, max(35, e_r_px[1] - 10)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 255), 2, cv2.LINE_AA)
-                                
-                                if l_vis > 0.35:
-                                    s_l_px = (int(l_s.x * w), int(l_s.y * h))
-                                    e_l_px = (int(l_e.x * w), int(l_e.y * h))
-                                    w_l_px = (int(l_w.x * w), int(l_w.y * h))
-                                    curr_l_angle = calculate_angle(s_l_px, e_l_px, w_l_px)
-                                    left_angles_live.append(curr_l_angle)
-                                    
-                                    cv2.line(mirrored, s_l_px, e_l_px, (255, 190, 0), 4)
-                                    cv2.line(mirrored, e_l_px, w_l_px, (255, 190, 0), 4)
-                                    cv2.circle(mirrored, s_l_px, 8, (0, 165, 255), -1)
-                                    cv2.circle(mirrored, e_l_px, 11, (0, 0, 255), -1)
-                                    cv2.circle(mirrored, w_l_px, 8, (0, 165, 255), -1)
-                                    cv2.putText(mirrored, f"L: {curr_l_angle} deg",
-                                        (max(10, e_l_px[0] - 120), max(35, e_l_px[1] - 10)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 255), 2, cv2.LINE_AA)
-                            
-                            # HUD-блок с отображением обеих рук
-                            hud_parts = []
-                            if curr_l_angle is not None:
-                                hud_parts.append(f"L: {curr_l_angle} deg")
-                            if curr_r_angle is not None:
-                                hud_parts.append(f"R: {curr_r_angle} deg")
-                            hud_angle_str = " | ".join(hud_parts) if hud_parts else "-- deg"
-                            
-                            cv2.rectangle(mirrored, (15, 15), (420, 72), (25, 25, 25), -1)
-                            cv2.putText(
-                                mirrored,
-                                f"{t['angle_hud']}: {hud_angle_str}",
-                                (25, 55),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.9,
-                                (50, 255, 50),
-                                2,
-                                cv2.LINE_AA
-                            )
-                            
-                            out.write(mirrored)
-                            
-                            rgb_display = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
-                            image_placeholder.image(rgb_display, channels="RGB", output_format="JPEG", use_container_width=True)
-                            
-                            remaining = max(0, int(RECORD_DURATION - elapsed))
-                            status_box.markdown(
-                                f"<div class='recording-box'>{t['recording_live'].format(sec=remaining)}</div>",
-                                unsafe_allow_html=True
-                            )
-                            progress_bar_ph.progress(min(1.0, elapsed / RECORD_DURATION))
-                        
-                        cap.release()
-                        out.release()
-                        # Не вызываем pose.close() — объект живёт в st.cache_resource
+                                    remaining = max(0, int(RECORD_DURATION - elapsed))
+                                    status_box.markdown(
+                                        f"<div class='recording-box'>{t['recording_live'].format(sec=remaining)}</div>",
+                                        unsafe_allow_html=True
+                                    )
+                                    progress_bar_ph.progress(min(1.0, elapsed / RECORD_DURATION))
+                        finally:
+                            actual_elapsed = time.time() - start_time
+                            actual_fps = max(10.0, frame_idx / actual_elapsed) if actual_elapsed > 0.5 else RECORD_FPS
+                            cam_reader.stop()
+                            cap.release()
+                            out.release()
+                            # Если реальный FPS значительно отличается — перезаписываем хедер видео
+                            if frame_idx > 0 and abs(actual_fps - RECORD_FPS) > 2.0:
+                                import shutil
+                                tmp_rewrite = "temp_camera_fps.mp4"
+                                out2 = cv2.VideoWriter(tmp_rewrite, fourcc, actual_fps, (width, height))
+                                cap2 = cv2.VideoCapture(temp_cam_file)
+                                while True:
+                                    ret2, f2 = cap2.read()
+                                    if not ret2:
+                                        break
+                                    out2.write(f2)
+                                cap2.release()
+                                out2.release()
+                                shutil.move(tmp_rewrite, temp_cam_file)
+                        # Не вызываем pose/hands.close() — объекты живут в st.cache_resource
                         
                         image_placeholder.empty()
                         progress_bar_ph.empty()
                         status_box.success(t["recording_done"])
                         
-                        # ── Автоматический выбор руки с наибольшей амплитудой движения (размахом угла) ──
-                        def calc_range(arr):
-                            return (max(arr) - min(arr)) if len(arr) >= 4 else 0
-                        
-                        r_amp = calc_range(right_angles_live)
-                        l_amp = calc_range(left_angles_live)
-                        
-                        if r_amp >= l_amp and len(right_angles_live) >= 5:
-                            chosen_angles = right_angles_live
-                            chosen_side_text = t["side_right"]
-                        elif len(left_angles_live) >= 5:
-                            chosen_angles = left_angles_live
-                            chosen_side_text = t["side_left"]
-                        elif len(right_angles_live) >= 5:
-                            chosen_angles = right_angles_live
-                            chosen_side_text = t["side_right"]
-                        else:
-                            chosen_angles = right_angles_live if len(right_angles_live) >= len(left_angles_live) else left_angles_live
-                            chosen_side_text = t["side_right"] if len(right_angles_live) >= len(left_angles_live) else t["side_left"]
+                        # ── Результаты анализа выбранной тренируемой руки ──
+                        chosen_angles = angles_live
+                        chosen_side_text = t["arm_right"] if is_right_arm else t["arm_left"]
+                        left_angles_rec = [] if is_right_arm else angles_live
+                        right_angles_rec = angles_live if is_right_arm else []
                         
                         with st.spinner(t["analyzing"]):
-                            analysis_res = mock_analyze_video(
+                            analysis_res = analyze_video_real(
                                 temp_cam_file, 
                                 current_ex_id, 
                                 real_angles=chosen_angles,
                                 chosen_side=chosen_side_text,
-                                left_angles=left_angles_live,
-                                right_angles=right_angles_live
+                                left_angles=left_angles_rec,
+                                right_angles=right_angles_rec,
+                                actual_fps=actual_fps
                             )
                         st.session_state["analysis_result"] = analysis_res
                         st.rerun()

@@ -1,13 +1,13 @@
-# SerIQ — Оценка упражнения на разгибание локтя (E02)
+﻿# TirekAI — Оценка упражнения на разгибание локтя (E02)
 
-Локальный воспроизводимый ML-пайплайн для домашней постинсультной реабилитации верхних конечностей (**Al-Sana Shakarim Solveathon — кейс SerIQ**). Система обрабатывает видео с веб-камеры или смартфона без платных облачных API, извлекает биомеханику локтевого сустава через **MediaPipe + OpenCV**, сегментирует повторения и возвращает калиброванную оценку качества выполнения каждого цикла.
+Локальный воспроизводимый ML-пайплайн для домашней постинсультной реабилитации верхних конечностей (**Al-Sana Shakarim Solveathon — кейс TirekAI**). Система обрабатывает видео с веб-камеры или смартфона без платных облачных API, извлекает биомеханику локтевого сустава через **MediaPipe + OpenCV**, сегментирует повторения и возвращает калиброванную оценку качества выполнения каждого цикла.
 
 ---
 
 ## Архитектура решения
 
 ```text
-SerIQ/
+TirekAI/
 ├── src/
 │   ├── biomechanics.py      # Ядро MediaPipe (PoseLandmarker + ImageSegmenter fallback), фильтрация и find_peaks
 │   ├── extract_features.py  # Шаг 1: сканирование датасета E02, извлечение временных рядов и признаков циклов
@@ -49,13 +49,13 @@ python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 
 # 2. Шаг 1: Извлечение признаков из видео упражнения E02
-.\.venv\Scripts\python src/extract_features.py --data-dir "видео/seriq-dataset" --workers 6
+.\.venv\Scripts\python src/extract_features.py --data-dir "видео/TirekAI-dataset" --workers 6
 
 # 3. Шаг 2: Обучение Baseline + CatBoost, подбор порога уверенности и генерация графиков
 .\.venv\Scripts\python src/train.py
 
 # 4. Шаг 3: Локальный инференс на любом видеофайле
-.\.venv\Scripts\python src/inference.py "видео/seriq-dataset/An upper limb stroke rehabilitation exercise video/Exercise/2_Extending the Elbow/Complete/Test/08_02_01_01.mp4"
+.\.venv\Scripts\python src/inference.py "видео/TirekAI-dataset/An upper limb stroke rehabilitation exercise video/Exercise/2_Extending the Elbow/Complete/Test/08_02_01_01.mp4"
 ```
 
 ---
